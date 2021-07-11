@@ -1,25 +1,7 @@
 #include <windows.h>
 #include <windowsx.h>
 
-#define fallthrough  
-
-enum ScreenDimension
-{
- ScreenDimension_X = 640,
- ScreenDimension_Y = 480,
-};
-
-struct Colour
-{
- unsigned char b;
- unsigned char g;
- unsigned char r;
- unsigned char a;
-};
-typedef struct Colour Colour;
-typedef struct Colour Pixel;
-#define Colour(...) ((Colour){__VA_ARGS__})
-
+#include "platform.h"
 #include "app.c"
 
 static int w32_global_is_running = 1;
@@ -43,6 +25,7 @@ W32HideWindow(HWND window_handle)
 {
  ShowWindow(window_handle, SW_HIDE);
  memset(w32_global_graphics_context.pixels, 255, sizeof(w32_global_graphics_context.pixels));
+ AppCallback_Cleanup();
 }
 
 static void
@@ -167,11 +150,30 @@ W32WindowMessageCallback(HWND window_handle,
     {
      EmptyClipboard();
      {
-      HGLOBAL MemoryHandle = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, sizeof(w32_global_graphics_context));
-      char *ClipboardData = (char *)GlobalLock(MemoryHandle);
-      memcpy(ClipboardData, &w32_global_graphics_context, sizeof(w32_global_graphics_context));
-      GlobalUnlock(MemoryHandle);
-      SetClipboardData(CF_DIB, MemoryHandle);
+      Canvas *canvas = LocalAlloc(0, AppCallback_GetCanvasSize());
+      AppCallback_GetCanvas(canvas);
+      size_t canvas_size = canvas->width * canvas->height * sizeof(Pixel);
+      
+      HGLOBAL memory_handle = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT,
+                                          sizeof(BITMAPINFO) + canvas_size);
+      char *clipboard_data = (char *)GlobalLock(memory_handle);
+      {
+       BITMAPINFOHEADER *bih = &(((BITMAPINFO *)clipboard_data)->bmiHeader);
+       bih->biSize = sizeof(BITMAPINFOHEADER);
+       bih->biPlanes = 1;
+       bih->biWidth = canvas->width;
+       bih->biHeight = -canvas->height;
+       bih->biBitCount = 32;
+       bih->biCompression = BI_RGB;
+       bih->biSizeImage = 0;
+       bih->biClrUsed = 0;
+       bih->biClrImportant = 0;
+       
+       Pixel *pixels = (Pixel *)(clipboard_data + sizeof(BITMAPINFO));
+       memcpy(pixels, canvas->pixels, canvas_size);
+      }
+      GlobalUnlock(memory_handle);
+      SetClipboardData(CF_DIB, memory_handle);
      }
      
      CloseClipboard();
@@ -250,9 +252,6 @@ wWinMain(HINSTANCE instance_handle,
                                 NULL);
  }
  
- //-NOTE(tbt): initialise app
- AppCallback_Init();
- 
  //-NOTE(tbt): initialise bitmap
  {
   BITMAPINFOHEADER *bih = &w32_global_graphics_context.bitmap_info.bmiHeader;
@@ -268,6 +267,10 @@ wWinMain(HINSTANCE instance_handle,
   
   memset(w32_global_graphics_context.pixels, 255, sizeof(w32_global_graphics_context.pixels));
  }
+ 
+ //-NOTE(tbt): initialise app
+ AppCallback_Init(w32_global_graphics_context.pixels);
+ 
  
  if(window_handle)
  {
