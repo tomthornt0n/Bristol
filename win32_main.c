@@ -24,12 +24,11 @@ static void
 W32HideWindow(HWND window_handle)
 {
  ShowWindow(window_handle, SW_HIDE);
- memset(w32_global_graphics_context.pixels, 255, sizeof(w32_global_graphics_context.pixels));
- AppCallback_Cleanup();
+ AppCallback_Cleanup(w32_global_graphics_context.pixels);
 }
 
 static void
-W32DrawBitmapToWindow(HDC device_context_handle)
+W32_RenderToWindow(HDC device_context_handle)
 {
  StretchDIBits(device_context_handle,
                0, 0,
@@ -53,7 +52,8 @@ W32WindowMessageCallback(HWND window_handle,
  LRESULT result = 0;
  
  static int is_mouse_hover_active = 0;
- static int is_mouse_button_down = 0;
+ 
+ static InputState input_state = InputState_None;
  
  switch(message)
  {
@@ -63,7 +63,6 @@ W32WindowMessageCallback(HWND window_handle,
    {
     case(HotKey_Show):
     {
-     AppCallback_Init(w32_global_graphics_context.pixels);
      ShowWindow(window_handle, SW_NORMAL);
      SetActiveWindow(window_handle);
      SetFocus(window_handle);
@@ -80,10 +79,25 @@ W32WindowMessageCallback(HWND window_handle,
   
   case(WM_LBUTTONDOWN):
   {
-   AppCallback_DrawBegin(w32_global_graphics_context.pixels,
-                         GET_X_LPARAM(l_param),
-                         GET_Y_LPARAM(l_param));
-   is_mouse_button_down = 1;
+   int x = GET_X_LPARAM(l_param);
+   int y = GET_Y_LPARAM(l_param);
+   HitTestResult hit_test_result = AppCallback_MouseDown(w32_global_graphics_context.pixels, x, y);
+   if(hit_test_result == HitTestResult_Canvas)
+   {
+    input_state = InputState_Drawing;
+   }
+   else if(hit_test_result == HitTestResult_ColourPicker_Resize)
+   {
+    input_state = InputState_ResizingColourPicker;
+   }
+   else
+   {
+    input_state = InputState_None;
+   }
+   
+   HDC device_context_handle = GetDC(window_handle);
+   W32_RenderToWindow(device_context_handle);
+   ReleaseDC(window_handle, device_context_handle);
   } break;
   
   // TODO(tbt): pointer input
@@ -97,7 +111,21 @@ W32WindowMessageCallback(HWND window_handle,
    AppCallback_DrawEnd(w32_global_graphics_context.pixels,
                        GET_X_LPARAM(l_param),
                        GET_Y_LPARAM(l_param));
-   is_mouse_button_down = 0;
+   input_state = 0;
+  } break;
+  
+  case(WM_MOUSEWHEEL):
+  {
+   POINT mouse;
+   GetCursorPos(&mouse);
+   ScreenToClient(window_handle, &mouse);
+   
+   AppCallback_Scroll(w32_global_graphics_context.pixels,
+                      mouse.x, mouse.y,
+                      GET_WHEEL_DELTA_WPARAM(w_param) / 120.0f);
+   HDC device_context_handle = GetDC(window_handle);
+   W32_RenderToWindow(device_context_handle);
+   ReleaseDC(window_handle, device_context_handle);
   } break;
   
   case(WM_MOUSEMOVE):
@@ -116,38 +144,62 @@ W32WindowMessageCallback(HWND window_handle,
     TrackMouseEvent(&track_mouse_event);
    }
    
-   if(is_mouse_button_down)
-   {
-    AppCallback_DrawMovement(w32_global_graphics_context.pixels,
-                             GET_X_LPARAM(l_param),
-                             GET_Y_LPARAM(l_param));
-    
-    HDC device_context_handle = GetDC(window_handle);
-    W32DrawBitmapToWindow(device_context_handle);
-    ReleaseDC(window_handle, device_context_handle);
-   }
+   AppCallback_MouseMotion(w32_global_graphics_context.pixels,
+                           GET_X_LPARAM(l_param),
+                           GET_Y_LPARAM(l_param),
+                           input_state);
+   
+   HDC device_context_handle = GetDC(window_handle);
+   W32_RenderToWindow(device_context_handle);
+   ReleaseDC(window_handle, device_context_handle);
   }
+  
+  case(WM_SETCURSOR):
+  {
+   if(InputState_ResizingColourPicker == input_state)
+   {
+    SetCursor(LoadCursorW(0, IDC_SIZENWSE));
+   }
+   else
+   {
+    SetCursor(LoadCursorW(0, IDC_ARROW));
+   }
+  } break;
   
   case(WM_PAINT):
   {
    PAINTSTRUCT ps;
    HDC device_context_handle = BeginPaint(window_handle, &ps);
-   W32DrawBitmapToWindow(device_context_handle);
+   W32_RenderToWindow(device_context_handle);
    result = EndPaint(window_handle, &ps);
   } break;
   
   case(WM_KEYDOWN):
   case(WM_SYSKEYDOWN):
+  case(WM_KEYUP):
+  case(WM_SYSKEYUP):
   {
-   if(VK_ESCAPE == w_param)
+   int is_down = !(l_param & (1 << 31));
+   
+   if(is_down &&
+      (VK_ESCAPE == w_param && (GetKeyState(VK_SHIFT) & 0x8000)) ||
+      (VK_F4 == w_param && (GetKeyState(VK_MENU) & 0x8000)))
    {
-    if(GetKeyState(VK_SHIFT) & 0x8000)
-    {
-     w32_global_is_running = 0;
-    }
+    w32_global_is_running = 0;
     W32HideWindow(window_handle);
    }
-   else if(VK_RETURN == w_param)
+   else if(is_down && VK_ESCAPE == w_param)
+   {
+    W32HideWindow(window_handle);
+   }
+   else if(VK_TAB == w_param)
+   {
+    AppCallback_Tab(w32_global_graphics_context.pixels, is_down);
+    HDC device_context_handle = GetDC(window_handle);
+    W32_RenderToWindow(device_context_handle);
+    ReleaseDC(window_handle, device_context_handle);
+   }
+   else if(is_down && VK_RETURN == w_param)
    {
     if(OpenClipboard(window_handle))
     {
@@ -186,20 +238,20 @@ W32WindowMessageCallback(HWND window_handle,
     W32HideWindow(window_handle);
    }
    
-   if(GetKeyState(VK_CONTROL) & 0x8000)
+   if((GetKeyState(VK_CONTROL) & 0x8000) && is_down)
    {
     if('Z' == w_param)
     {
      AppCallback_Undo(w32_global_graphics_context.pixels);
      HDC device_context_handle = GetDC(window_handle);
-     W32DrawBitmapToWindow(device_context_handle);
+     W32_RenderToWindow(device_context_handle);
      ReleaseDC(window_handle, device_context_handle);
     }
     else if ('Y' == w_param)
     {
      AppCallback_Redo(w32_global_graphics_context.pixels);
      HDC device_context_handle = GetDC(window_handle);
-     W32DrawBitmapToWindow(device_context_handle);
+     W32_RenderToWindow(device_context_handle);
      ReleaseDC(window_handle, device_context_handle);
     }
    }
@@ -222,13 +274,14 @@ W32WindowMessageCallback(HWND window_handle,
  return result;
 }
 
+#define ApplicationNameString WideStringify(APPLICATION_NAME)
+
 int APIENTRY
 wWinMain(HINSTANCE instance_handle,
          HINSTANCE previous_instance,
          LPWSTR command_line,
          int show_mode)
 {
- wchar_t *window_class_name = L"DRAWING_POPUP";
  HWND window_handle;
  
  //-NOTE(tbt): register window class
@@ -236,7 +289,7 @@ wWinMain(HINSTANCE instance_handle,
   WNDCLASSEXW window_class = { sizeof(window_class) };
   window_class.lpfnWndProc = W32WindowMessageCallback;
   window_class.hInstance = instance_handle;
-  window_class.lpszClassName = window_class_name;
+  window_class.lpszClassName = ApplicationNameString;
   RegisterClassEx(&window_class);
  }
  
@@ -244,8 +297,8 @@ wWinMain(HINSTANCE instance_handle,
  {
   int screen_w = GetSystemMetrics(SM_CXSCREEN);
   int screen_h = GetSystemMetrics(SM_CYSCREEN);
-  window_handle = CreateWindowW(window_class_name,
-                                L"drawing popup",
+  window_handle = CreateWindowW(ApplicationNameString,
+                                ApplicationNameString,
                                 WS_POPUPWINDOW,
                                 (screen_w - ScreenDimension_X) / 2,
                                 (screen_h - ScreenDimension_Y) / 2,
