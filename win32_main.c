@@ -108,7 +108,7 @@ W32WindowMessageCallback(HWND window_handle,
   } fallthrough;
   case(WM_LBUTTONUP):
   {
-   AppCallback_DrawEnd(w32_global_graphics_context.pixels,
+   AppCallback_MouseUp(w32_global_graphics_context.pixels,
                        GET_X_LPARAM(l_param),
                        GET_Y_LPARAM(l_param));
    input_state = 0;

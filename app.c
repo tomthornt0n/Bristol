@@ -6,7 +6,7 @@ Power(float a, unsigned int b)
 {
  float a0 = a;
  for(int i = 0;
-     i < b;
+     i < b - 1;
      i += 1)
  {
   a *= a0;
@@ -21,9 +21,20 @@ ColourLerp(Colour a,
 {
  Colour result;
  unsigned char t0 = 255 * t;
- result.b = ((t0 * (b.b - a.b)) >> 8) + a.b;
- result.g = ((t0 * (b.g - a.g)) >> 8) + a.g;
- result.r = ((t0 * (b.r - a.r)) >> 8) + a.r;
+ if(0 == t0)
+ {
+  result = a;
+ }
+ else if(255 == t0)
+ {
+  result = b;
+ }
+ else
+ {
+  result.b = ((t0 * (b.b - a.b)) >> 8) + a.b;
+  result.g = ((t0 * (b.g - a.g)) >> 8) + a.g;
+  result.r = ((t0 * (b.r - a.r)) >> 8) + a.r;
+ }
  return result;
 }
 
@@ -43,9 +54,14 @@ static UndoStack global_undo_stack = {0};
 
 static Pixel global_canvas[ScreenDimension_X * ScreenDimension_Y];
 
-enum GuiSettings
+enum Settings
 {
- ColourPicker_Margin = 12
+ ColourPicker_Margin = 12,
+ ColourPicker_SizeMin = 50,
+ ColourPicker_SizeMax = 400,
+ 
+ BrushSize_Min = 2,
+ BrushSize_Max = 48,
 };
 
 static Colour
@@ -186,13 +202,13 @@ typedef struct
 {
  Colour colour;
  int radius;
- int hardness;
+ float hardness;
 } BrushSettings;
 static BrushSettings global_brush_settings =
 {
  .colour = {0},
  .radius = 3,
- .hardness = 1,
+ .hardness = 1.5,
 };
 
 
@@ -255,16 +271,19 @@ HitTest(int x, int y)
  
  int resize_target_size = 4;
  
- if(y > global_colour_picker.size - resize_target_size &&
-    y < global_colour_picker.size + resize_target_size &&
-    x > (global_colour_picker.size - ColourPicker_Margin) - resize_target_size &&
-    x < (global_colour_picker.size - ColourPicker_Margin) + resize_target_size)
+ if(global_colour_picker.is_showing)
  {
-  result = HitTestResult_ColourPicker_Resize;
- }
- else if(y < global_colour_picker.size && x < global_colour_picker.size)
- {
-  result = HitTestResult_ColourPicker;
+  if(y > global_colour_picker.size - resize_target_size &&
+     y < global_colour_picker.size + resize_target_size &&
+     x > (global_colour_picker.size - ColourPicker_Margin) - resize_target_size &&
+     x < (global_colour_picker.size - ColourPicker_Margin) + resize_target_size)
+  {
+   result = HitTestResult_ColourPicker_Resize;
+  }
+  else if(y < global_colour_picker.size && x < global_colour_picker.size)
+  {
+   result = HitTestResult_ColourPicker;
+  }
  }
  
  return result;
@@ -356,36 +375,41 @@ AppCallback_MouseMotion(Pixel *screen,
         i < steps;
         i += 1)
     {
-     int x_offset = positions[i][0] - x0;
-     int y_offset = positions[i][1] - y0;
-     int dist_squared = x_offset * x_offset + y_offset * y_offset;
-     if(dist_squared <= global_brush_settings.radius * global_brush_settings.radius &&
-        0 <= x0 && x0 < ScreenDimension_X &&
+     if(0 <= x0 && x0 < ScreenDimension_X &&
         0 <= y0 && y0 < ScreenDimension_Y)
      {
-      Pixel *current = &global_canvas[x0 + y0 * ScreenDimension_X];
-      float alpha = 1.0f / Power(dist_squared, global_brush_settings.hardness);
-      *current = ColourLerp(*current, global_brush_settings.colour, alpha);
+      int x_offset = positions[i][0] - x0;
+      int y_offset = positions[i][1] - y0;
+      int dist_squared = x_offset * x_offset + y_offset * y_offset;
+      
+      if(dist_squared <= global_brush_settings.radius * global_brush_settings.radius)
+      {
+       Pixel *current = &global_canvas[x0 + y0 * ScreenDimension_X];
+       float alpha = 1.0f / dist_squared;
+       *current = ColourLerp(*current, global_brush_settings.colour, alpha);
+      }
      }
     }
    }
   }
-  RenderApp(screen);
  }
  else if(InputState_ResizingColourPicker == input_state)
  {
-  global_colour_picker.size = (x - ColourPicker_Margin + y) / 2;
-  RenderApp(screen);
+  int new_size = (x - ColourPicker_Margin + y) / 2;
+  if(ColourPicker_SizeMin <= new_size && new_size < ColourPicker_SizeMax)
+  {
+   global_colour_picker.size = new_size;
+  }
  }
- 
  
  global_prev_x = x;
  global_prev_y = y;
  
+ RenderApp(screen);
 }
 
 static void
-AppCallback_DrawEnd(Pixel *screen,
+AppCallback_MouseUp(Pixel *screen,
                     int x, int y)
 {
  if(global_undo_stack.top < global_undo_stack.max_frames)
@@ -410,6 +434,45 @@ AppCallback_Scroll(Pixel *screen,
   global_colour_picker.hue += wheel_delta * 2;
   RenderApp(screen);
  }
+ else if(HitTestResult_Canvas == hit_test_result)
+ {
+  int new_radius = global_brush_settings.radius + wheel_delta * 2;
+  if(BrushSize_Min <= new_radius && new_radius < BrushSize_Max)
+  {
+   global_brush_settings.radius = new_radius;
+  }
+  RenderApp(screen);
+  
+  // NOTE(tbt): draw brush size indicator
+  {
+   int radius_squared = global_brush_settings.radius * global_brush_settings.radius;
+   int outline_thickness_squared = radius_squared / 8;
+   int half_outline_thickness = sqrtf(outline_thickness_squared) / 2.0f;
+   
+   for(int y0 = -global_brush_settings.radius - half_outline_thickness;
+       y0 < global_brush_settings.radius + half_outline_thickness;
+       y0 += 1)
+   {
+    for(int x0 = -global_brush_settings.radius - half_outline_thickness;
+        x0 < global_brush_settings.radius + half_outline_thickness;
+        x0 += 1)
+    {
+     int pixel_x = x +x0;
+     int pixel_y = y +y0;
+     if(0 <= pixel_x && pixel_x < ScreenDimension_X &&
+        0 <= pixel_y && pixel_y < ScreenDimension_Y)
+     {
+      int distance_squared = x0 * x0 + y0 * y0;
+      if(distance_squared >= radius_squared - outline_thickness_squared &&
+         distance_squared <= radius_squared + outline_thickness_squared)
+      {
+       screen[pixel_x + pixel_y * ScreenDimension_X] = Colour(128, 128, 128);
+      }
+     }
+    }
+   }
+  }
+ }
 }
 
 static void
@@ -422,7 +485,7 @@ AppCallback_Tab(Pixel *screen, int is_down)
 static void
 AppCallback_Undo(Pixel *screen)
 {
- if(global_undo_stack.current > 1)
+ if(global_undo_stack.current > 0)
  {
   global_undo_stack.current -= 1;
   UndoFrame *undo_frame = &global_undo_stack.frames[global_undo_stack.current];

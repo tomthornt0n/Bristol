@@ -4,7 +4,6 @@ A simple pop-up drawing program that appears on key-press and copies straight to
 ## TODO:
 * ink input
 * system tray icon when window is hidden
-* resizable brush
 * customisable key-bindings
 
 ## key bindings:
