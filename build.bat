@@ -1,6 +1,6 @@
 @echo off
 set application_name=drawing_popup
-set build_options= /DBUILD_WIN32=1 /DUNICODE
+set build_options= /DBUILD_WIN32=1 /DUNICODE /DAPPLICATION_NAME=%application_name%
 set compile_flags= /nologo /Zi /FC /I ..
 set link_flags= opengl32.lib /incremental:no /debug gdi32.lib user32.lib winmm.lib dxguid.lib Dinput8.lib
 
