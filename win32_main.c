@@ -63,6 +63,7 @@ W32WindowMessageCallback(HWND window_handle,
    {
     case(HotKey_Show):
     {
+     AppCallback_Init(w32_global_graphics_context.pixels);
      ShowWindow(window_handle, SW_NORMAL);
      SetActiveWindow(window_handle);
      SetFocus(window_handle);
@@ -84,6 +85,8 @@ W32WindowMessageCallback(HWND window_handle,
                          GET_Y_LPARAM(l_param));
    is_mouse_button_down = 1;
   } break;
+  
+  // TODO(tbt): pointer input
   
   case(WM_MOUSELEAVE):
   {
