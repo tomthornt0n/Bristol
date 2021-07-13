@@ -1,6 +1,8 @@
 #include <stdlib.h>
 #include <stddef.h>
 
+#include "icon.h"
+
 static float
 Power(float a, unsigned int b)
 {
@@ -166,8 +168,8 @@ static ColourPicker global_colour_picker =
   { 112, 135, 208 },
   { 139, 203, 235 },
   { 140, 190, 163 },
-  { 173, 142, 180 },
   { 172, 129,  94 },
+  { 173, 142, 180 },
   
   { 255, 255, 255 },
   { 0, 0, 0 },
@@ -447,7 +449,7 @@ AppCallback_Scroll(Pixel *screen,
   {
    int radius_squared = global_brush_settings.radius * global_brush_settings.radius;
    int outline_thickness_squared = radius_squared / 8;
-   int half_outline_thickness = sqrtf(outline_thickness_squared) / 2.0f;
+   int half_outline_thickness = (outline_thickness_squared / 2.0f) + 0.5f;
    
    for(int y0 = -global_brush_settings.radius - half_outline_thickness;
        y0 < global_brush_settings.radius + half_outline_thickness;

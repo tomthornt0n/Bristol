@@ -1,9 +1,8 @@
-# Drawing Popup _(working title)_
+# Bristol
 A simple pop-up drawing program that appears on key-press and copies straight to the clipboard
 
 ## TODO:
-* ink input
-* system tray icon when window is hidden
+* pen/touch input
 * customisable key-bindings
 
 ## key bindings:

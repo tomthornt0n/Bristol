@@ -15,14 +15,44 @@ static W32GraphicsContext w32_global_graphics_context;
 
 typedef enum
 {
+ NotificationIconID_Main,
+ NotificationIconID_MAX,
+} NotificationIconID;
+
+typedef enum
+{
  HotKey_Show,
- 
  HotKey_MAX,
 } HotKey;
+
+NOTIFYICONDATAW w32_global_notify_icon_data =
+{
+ .cbSize = sizeof(w32_global_notify_icon_data),
+ .uID = NotificationIconID_Main,
+ .uFlags = NIF_ICON,
+ .szTip = L"Drawing Popup",
+};
+
+static void
+W32ShowWindow(HWND window_handle)
+{
+ Shell_NotifyIconW(NIM_DELETE, &w32_global_notify_icon_data);
+ 
+ ShowWindow(window_handle, SW_NORMAL);
+ SetActiveWindow(window_handle);
+ SetFocus(window_handle);
+ BringWindowToTop(window_handle);
+ SetForegroundWindow(window_handle);
+}
+
+static HICON global_icon_handle;
 
 static void
 W32HideWindow(HWND window_handle)
 {
+ w32_global_notify_icon_data.hWnd = window_handle;
+ w32_global_notify_icon_data.hIcon = global_icon_handle;
+ Shell_NotifyIconW(NIM_ADD, &w32_global_notify_icon_data);
  ShowWindow(window_handle, SW_HIDE);
  AppCallback_Cleanup(w32_global_graphics_context.pixels);
 }
@@ -63,11 +93,7 @@ W32WindowMessageCallback(HWND window_handle,
    {
     case(HotKey_Show):
     {
-     ShowWindow(window_handle, SW_NORMAL);
-     SetActiveWindow(window_handle);
-     SetFocus(window_handle);
-     BringWindowToTop(window_handle);
-     SetForegroundWindow(window_handle);
+     W32ShowWindow(window_handle);
     } break;
     
     default:
@@ -234,7 +260,6 @@ W32WindowMessageCallback(HWND window_handle,
      CloseClipboard();
     }
     
-    ShowWindow(window_handle, SW_HIDE);
     W32HideWindow(window_handle);
    }
    
@@ -284,11 +309,67 @@ wWinMain(HINSTANCE instance_handle,
 {
  HWND window_handle;
  
+ //-NOTE(tbt): load icon
+ {
+  HICON icon = NULL;
+  HDC dc = GetDC(NULL);
+  
+  union
+  {
+   BITMAPV5HEADER v5_header;
+   BITMAPINFO info;
+  } bitmap = {0};
+  bitmap.v5_header.bV5Size = sizeof(bitmap.v5_header);
+  bitmap.v5_header.bV5Width = global_icon.width;
+  bitmap.v5_header.bV5Height = -global_icon.height;
+  bitmap.v5_header.bV5Planes = 1;
+  bitmap.v5_header.bV5BitCount = 32;
+  bitmap.v5_header.bV5Compression = BI_BITFIELDS;
+  bitmap.v5_header.bV5RedMask = 0x00ff0000;
+  bitmap.v5_header.bV5GreenMask = 0x0000ff00;
+  bitmap.v5_header.bV5BlueMask = 0x000000ff;
+  bitmap.v5_header.bV5AlphaMask = 0xff000000;
+  
+  unsigned char *target;
+  HBITMAP colour = CreateDIBSection(dc,
+                                    &bitmap.info,
+                                    DIB_RGB_COLORS,
+                                    (void **)&target,
+                                    NULL, 0);
+  
+  ReleaseDC(NULL, dc);
+  
+  if (colour)
+  {
+   HBITMAP mask = CreateBitmap(global_icon.width, global_icon.height, 1, 1, NULL);
+   
+   if (mask)
+   {
+    memcpy(target, global_icon.pixels, global_icon.width * global_icon.height * 4);
+    
+    ICONINFO icon_info = {0};
+    icon_info.fIcon = 1;
+    icon_info.xHotspot = global_icon.width / 2;
+    icon_info.yHotspot = global_icon.height / 2;
+    icon_info.hbmMask = mask;
+    icon_info.hbmColor = colour;
+    
+    icon = CreateIconIndirect(&icon_info);
+    
+    DeleteObject(colour);
+    DeleteObject(mask);
+   }
+  }
+  
+  global_icon_handle = icon;
+ }
+ 
  //-NOTE(tbt): register window class
  {
   WNDCLASSEXW window_class = { sizeof(window_class) };
   window_class.lpfnWndProc = W32WindowMessageCallback;
   window_class.hInstance = instance_handle;
+  window_class.hIcon = global_icon_handle;
   window_class.lpszClassName = ApplicationNameString;
   RegisterClassEx(&window_class);
  }
@@ -331,7 +412,7 @@ wWinMain(HINSTANCE instance_handle,
  if(window_handle)
  {
   //-NOTE(tbt): hide window and register hot key
-  ShowWindow(window_handle, SW_HIDE);
+  W32HideWindow(window_handle);
   if(RegisterHotKey(window_handle, HotKey_Show, MOD_NOREPEAT | MOD_WIN | MOD_SHIFT, 'D'))
   {
    MSG msg;
@@ -363,6 +444,8 @@ wWinMain(HINSTANCE instance_handle,
  {
   UnregisterHotKey(window_handle, hot_key);
  }
+ 
+ Shell_NotifyIconW(NIM_DELETE, &w32_global_notify_icon_data);
  
  return 0;
 }

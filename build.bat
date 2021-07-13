@@ -1,8 +1,8 @@
 @echo off
-set application_name=drawing_popup
+set application_name=Bristol
 set build_options= /DBUILD_WIN32=1 /DUNICODE /DAPPLICATION_NAME=%application_name%
 set compile_flags= /nologo /Zi /FC /I ..
-set link_flags= opengl32.lib /incremental:no /debug gdi32.lib user32.lib winmm.lib dxguid.lib Dinput8.lib
+set link_flags= /incremental:no /debug shell32.lib gdi32.lib user32.lib winmm.lib dxguid.lib Dinput8.lib
 
 if not exist build mkdir build
 pushd build
