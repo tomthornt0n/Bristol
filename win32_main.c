@@ -273,41 +273,47 @@ W32WindowMessageCallback(HWND window_handle,
    }
    else if(is_down && VK_RETURN == w_param)
    {
-    if(OpenClipboard(window_handle))
-    {
-     EmptyClipboard();
-     {
-      Canvas *canvas = LocalAlloc(0, AppCallback_GetCanvasSize());
-      AppCallback_GetCanvas(canvas);
-      size_t canvas_size = canvas->width * canvas->height * sizeof(Pixel);
-      
-      HGLOBAL memory_handle = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT,
-                                          sizeof(BITMAPINFO) + canvas_size);
-      char *clipboard_data = (char *)GlobalLock(memory_handle);
-      {
-       BITMAPINFOHEADER *bih = &(((BITMAPINFO *)clipboard_data)->bmiHeader);
-       bih->biSize = sizeof(BITMAPINFOHEADER);
-       bih->biPlanes = 1;
-       bih->biWidth = canvas->width;
-       bih->biHeight = -canvas->height;
-       bih->biBitCount = 32;
-       bih->biCompression = BI_RGB;
-       bih->biSizeImage = 0;
-       bih->biClrUsed = 0;
-       bih->biClrImportant = 0;
-       
-       Pixel *pixels = (Pixel *)(clipboard_data + sizeof(BITMAPINFO));
-       memcpy(pixels, canvas->pixels, canvas_size);
-       
-       LocalFree(canvas);
-      }
-      GlobalUnlock(memory_handle);
-      SetClipboardData(CF_DIB, memory_handle);
-     }
-     
-     CloseClipboard();
-    }
+    Canvas *canvas = LocalAlloc(0, AppCallback_GetCanvasSize());
+    AppCallback_GetCanvas(canvas);
     
+    HBITMAP copy_bitmap = CreateBitmap(canvas->width, canvas->height, 1, 32, NULL);
+    HDC screen_dc = GetDC(NULL);
+    HDC dest_dc = CreateCompatibleDC(screen_dc);
+    HBITMAP old_destination_bitmap = (HBITMAP)SelectObject(dest_dc, copy_bitmap);
+    
+    BITMAPINFO bitmap_info;
+    BITMAPINFOHEADER *bih = &bitmap_info.bmiHeader;
+    bih->biSize = sizeof(BITMAPINFOHEADER);
+    bih->biPlanes = 1;
+    bih->biWidth = ScreenDimension_X;
+    bih->biHeight = -ScreenDimension_Y;
+    bih->biBitCount = 32;
+    bih->biCompression = BI_RGB;
+    bih->biSizeImage = 0;
+    bih->biClrUsed = 0;
+    bih->biClrImportant = 0;
+    
+    StretchDIBits(dest_dc,
+                  0, 0,
+                  canvas->width,
+                  canvas->height,
+                  0, 0,
+                  canvas->width,
+                  canvas->height,
+                  canvas->pixels,
+                  &bitmap_info,
+                  DIB_RGB_COLORS,
+                  SRCCOPY);
+    
+    ReleaseDC(NULL, screen_dc);
+    DeleteDC(dest_dc);
+    
+    OpenClipboard(window_handle);
+    EmptyClipboard();
+    SetClipboardData(CF_BITMAP, copy_bitmap);
+    CloseClipboard();
+    
+    LocalFree(canvas);
     W32HideWindow(window_handle);
    }
    
