@@ -18,4 +18,3 @@ A simple pop-up drawing program that appears on key-press and copies straight to
 * scroll mouse wheel over canvas to resize brush
 * scroll mouse wheel over colour picker to change the hue
 * drag bottom right of colour picker to resize
-* the window is hidden and the drawing canceled if the window looses focus
