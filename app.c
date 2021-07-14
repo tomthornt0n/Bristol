@@ -210,7 +210,6 @@ static BrushSettings global_brush_settings =
 {
  .colour = {0},
  .radius = 3,
- .hardness = 1.5,
 };
 
 
@@ -337,6 +336,7 @@ AppCallback_MouseDown(Pixel *screen,
 static void
 AppCallback_MouseMotion(Pixel *screen,
                         int x, int y,
+                        float pressure,
                         InputState input_state)
 {
  if(InputState_Drawing == input_state)
@@ -365,6 +365,9 @@ AppCallback_MouseMotion(Pixel *screen,
    positions[i][1] = global_prev_y * (1.0f - t) + y * t;
   }
   
+  float pressure_adjusted_brush_radius = global_brush_settings.radius * pressure;
+  pressure_adjusted_brush_radius *= pressure_adjusted_brush_radius;
+  
   for(int y0 = from_y;
       y0 < dest_y;
       y0 += 1)
@@ -384,7 +387,7 @@ AppCallback_MouseMotion(Pixel *screen,
       int y_offset = positions[i][1] - y0;
       int dist_squared = x_offset * x_offset + y_offset * y_offset;
       
-      if(dist_squared <= global_brush_settings.radius * global_brush_settings.radius)
+      if(dist_squared <= pressure_adjusted_brush_radius)
       {
        Pixel *current = &global_canvas[x0 + y0 * ScreenDimension_X];
        float alpha = 1.0f / dist_squared;
@@ -523,7 +526,7 @@ AppCallback_GetCanvas(Canvas *canvas)
 }
 
 static void
-AppCallback_Cleanup(Pixel *screen)
+AppCallback_WindowHidden(Pixel *screen)
 {
  global_undo_stack.top = 0;
  global_undo_stack.current = 0;

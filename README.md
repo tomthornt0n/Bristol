@@ -2,7 +2,6 @@
 A simple pop-up drawing program that appears on key-press and copies straight to the clipboard
 
 ## TODO:
-* pen/touch input
 * customisable key-bindings
 
 ## key bindings:

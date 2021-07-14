@@ -4,7 +4,7 @@
 #include "platform.h"
 #include "app.c"
 
-static int w32_global_is_running = 1;
+#define ApplicationNameString WideStringify(APPLICATION_NAME)
 
 typedef struct
 {
@@ -27,10 +27,12 @@ typedef enum
 
 NOTIFYICONDATAW w32_global_notify_icon_data =
 {
+ .uVersion = NOTIFYICON_VERSION_4,
  .cbSize = sizeof(w32_global_notify_icon_data),
  .uID = NotificationIconID_Main,
- .uFlags = NIF_ICON,
- .szTip = L"Drawing Popup",
+ .uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP,
+ .uCallbackMessage = WM_USER + NotificationIconID_Main,
+ .szTip = ApplicationNameString,
 };
 
 static void
@@ -53,8 +55,9 @@ W32HideWindow(HWND window_handle)
  w32_global_notify_icon_data.hWnd = window_handle;
  w32_global_notify_icon_data.hIcon = global_icon_handle;
  Shell_NotifyIconW(NIM_ADD, &w32_global_notify_icon_data);
+ Shell_NotifyIconW(NIM_SETVERSION, &w32_global_notify_icon_data);
  ShowWindow(window_handle, SW_HIDE);
- AppCallback_Cleanup(w32_global_graphics_context.pixels);
+ AppCallback_WindowHidden(w32_global_graphics_context.pixels);
 }
 
 static void
@@ -103,11 +106,22 @@ W32WindowMessageCallback(HWND window_handle,
    }
   } break;
   
+  case(WM_POINTERDOWN):
+  case(WM_NCPOINTERDOWN):
   case(WM_LBUTTONDOWN):
   {
-   int x = GET_X_LPARAM(l_param);
-   int y = GET_Y_LPARAM(l_param);
-   HitTestResult hit_test_result = AppCallback_MouseDown(w32_global_graphics_context.pixels, x, y);
+   POINT position =
+   {
+    .x = GET_X_LPARAM(l_param),
+    .y = GET_Y_LPARAM(l_param),
+   };
+   
+   if(WM_LBUTTONDOWN != message)
+   {
+    ScreenToClient(window_handle, &position);
+   }
+   
+   HitTestResult hit_test_result = AppCallback_MouseDown(w32_global_graphics_context.pixels, position.x, position.y);
    if(hit_test_result == HitTestResult_Canvas)
    {
     input_state = InputState_Drawing;
@@ -126,12 +140,20 @@ W32WindowMessageCallback(HWND window_handle,
    ReleaseDC(window_handle, device_context_handle);
   } break;
   
-  // TODO(tbt): pointer input
+  
+  case(WM_POINTERDEVICEINRANGE):
+  {
+  } break;
   
   case(WM_MOUSELEAVE):
   {
    is_mouse_hover_active = 0;
   } fallthrough;
+  case(WM_POINTERUP):
+  case(WM_POINTERENTER):
+  case(WM_POINTERLEAVE):
+  case(WM_POINTERDEVICEOUTOFRANGE):
+  case(WM_NCPOINTERUP):
   case(WM_LBUTTONUP):
   {
    AppCallback_MouseUp(w32_global_graphics_context.pixels,
@@ -154,10 +176,12 @@ W32WindowMessageCallback(HWND window_handle,
    ReleaseDC(window_handle, device_context_handle);
   } break;
   
+  case(WM_POINTERUPDATE):
+  case(WM_NCPOINTERUPDATE):
   case(WM_MOUSEMOVE):
   {
    // NOTE(tbt): uggghhhhhh
-   if(!is_mouse_hover_active)
+   if(WM_MOUSEMOVE == message && !is_mouse_hover_active)
    {
     is_mouse_hover_active = 1;
     TRACKMOUSEEVENT track_mouse_event = {0};
@@ -170,9 +194,31 @@ W32WindowMessageCallback(HWND window_handle,
     TrackMouseEvent(&track_mouse_event);
    }
    
+   POINT position =
+   {
+    .x = GET_X_LPARAM(l_param),
+    .y = GET_Y_LPARAM(l_param),
+   };
+   
+   float pressure = 1.0f;
+   
+   if(WM_MOUSEMOVE != message)
+   {
+    ScreenToClient(window_handle, &position);
+    
+    POINTER_PEN_INFO pen_info;
+    if(GetPointerPenInfo(GET_POINTERID_WPARAM(w_param), &pen_info))
+    {
+     if(0 < pen_info.pressure)
+     {
+      pressure = (float)pen_info.pressure / 1024.0f;
+     }
+    }
+   }
+   
    AppCallback_MouseMotion(w32_global_graphics_context.pixels,
-                           GET_X_LPARAM(l_param),
-                           GET_Y_LPARAM(l_param),
+                           position.x, position.y,
+                           pressure,
                            input_state);
    
    HDC device_context_handle = GetDC(window_handle);
@@ -211,7 +257,7 @@ W32WindowMessageCallback(HWND window_handle,
       (VK_ESCAPE == w_param && (GetKeyState(VK_SHIFT) & 0x8000)) ||
       (VK_F4 == w_param && (GetKeyState(VK_MENU) & 0x8000)))
    {
-    w32_global_is_running = 0;
+    PostQuitMessage(0);
     W32HideWindow(window_handle);
    }
    else if(is_down && VK_ESCAPE == w_param)
@@ -252,6 +298,8 @@ W32WindowMessageCallback(HWND window_handle,
        
        Pixel *pixels = (Pixel *)(clipboard_data + sizeof(BITMAPINFO));
        memcpy(pixels, canvas->pixels, canvas_size);
+       
+       LocalFree(canvas);
       }
       GlobalUnlock(memory_handle);
       SetClipboardData(CF_DIB, memory_handle);
@@ -284,10 +332,47 @@ W32WindowMessageCallback(HWND window_handle,
   
   case(WM_DESTROY):
   case(WM_CLOSE):
-  case(WM_QUIT):
-  case(WM_KILLFOCUS):
   {
    W32HideWindow(window_handle);
+  } break;
+  
+  case(WM_USER + NotificationIconID_Main):
+  {
+   if(WM_LBUTTONDOWN == LOWORD(l_param))
+   {
+    W32ShowWindow(window_handle);
+   }
+   else if(WM_RBUTTONDOWN == LOWORD(l_param))
+   {
+    enum
+    {
+     MenuItem_NONE,
+     MenuItem_Show,
+     MenuItem_Quit,
+    } menu_item;
+    
+    HMENU menu_handle = CreatePopupMenu();
+    {
+     AppendMenuW(menu_handle, MF_STRING, MenuItem_Show, L"S&how");
+     AppendMenuW(menu_handle, MF_STRING, MenuItem_Quit, L"Q&uit");
+    }
+    
+    menu_item = TrackPopupMenu(menu_handle,
+                               TPM_LEFTBUTTON | TPM_NONOTIFY | TPM_RETURNCMD,
+                               GET_X_LPARAM(w_param),
+                               GET_Y_LPARAM(w_param),
+                               0, window_handle, NULL);
+    DestroyMenu(menu_handle);
+    if(MenuItem_Show == menu_item)
+    {
+     W32ShowWindow(window_handle);
+    }
+    else if (MenuItem_Quit == menu_item)
+    {
+     W32HideWindow(window_handle);
+     PostQuitMessage(0);
+    }
+   }
   } break;
   
   default:
@@ -298,8 +383,6 @@ W32WindowMessageCallback(HWND window_handle,
  
  return result;
 }
-
-#define ApplicationNameString WideStringify(APPLICATION_NAME)
 
 int APIENTRY
 wWinMain(HINSTANCE instance_handle,
@@ -415,17 +498,19 @@ wWinMain(HINSTANCE instance_handle,
   W32HideWindow(window_handle);
   if(RegisterHotKey(window_handle, HotKey_Show, MOD_NOREPEAT | MOD_WIN | MOD_SHIFT, 'D'))
   {
+   //-NOTE(tbt): main message loop
    MSG msg;
    while(GetMessageW(&msg, NULL, 0, 0))
    {
-    //-NOTE(tbt): main message loop
-    TranslateMessage(&msg);
-    DispatchMessage(&msg);
-    if(!w32_global_is_running)
+    if(WM_QUIT == msg.message)
     {
      break;
     }
-    WaitMessage(); // NOTE(tbt): is this necessary when using GetMessage()?
+    else
+    {
+     TranslateMessage(&msg);
+     DispatchMessage(&msg);
+    }
    }
   }
   else
