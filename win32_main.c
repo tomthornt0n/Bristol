@@ -86,6 +86,7 @@ W32WindowMessageCallback(HWND window_handle,
  
  static int is_mouse_hover_active = 0;
  
+ static int currently_down_pointer = -1;
  static InputState input_state = InputState_None;
  
  switch(message)
@@ -110,14 +111,16 @@ W32WindowMessageCallback(HWND window_handle,
   case(WM_NCPOINTERDOWN):
   case(WM_LBUTTONDOWN):
   {
-   POINT position =
+   POINT position;
+   position.x = GET_X_LPARAM(l_param);
+   position.y = GET_Y_LPARAM(l_param);
+   if(WM_LBUTTONDOWN == message)
    {
-    .x = GET_X_LPARAM(l_param),
-    .y = GET_Y_LPARAM(l_param),
-   };
-   
-   if(WM_LBUTTONDOWN != message)
+    currently_down_pointer = 0;
+   }
+   else
    {
+    currently_down_pointer = GET_POINTERID_WPARAM(w_param) + 1;
     ScreenToClient(window_handle, &position);
    }
    
@@ -156,6 +159,8 @@ W32WindowMessageCallback(HWND window_handle,
   case(WM_NCPOINTERUP):
   case(WM_LBUTTONUP):
   {
+   currently_down_pointer = -1;
+   
    AppCallback_MouseUp(w32_global_graphics_context.pixels,
                        GET_X_LPARAM(l_param),
                        GET_Y_LPARAM(l_param));
@@ -167,7 +172,6 @@ W32WindowMessageCallback(HWND window_handle,
    POINT mouse;
    GetCursorPos(&mouse);
    ScreenToClient(window_handle, &mouse);
-   
    AppCallback_Scroll(w32_global_graphics_context.pixels,
                       mouse.x, mouse.y,
                       GET_WHEEL_DELTA_WPARAM(w_param) / 120.0f);
@@ -193,21 +197,25 @@ W32WindowMessageCallback(HWND window_handle,
     }
     TrackMouseEvent(&track_mouse_event);
    }
-   
-   POINT position =
-   {
-    .x = GET_X_LPARAM(l_param),
-    .y = GET_Y_LPARAM(l_param),
-   };
+   POINT position;
+   position.x = GET_X_LPARAM(l_param);
+   position.y = GET_Y_LPARAM(l_param);
    
    float pressure = 1.0f;
+   int pointer_id = 0;
    
-   if(WM_MOUSEMOVE != message)
+   if(WM_MOUSEMOVE == message)
    {
+    pointer_id = 0;
+   }
+   else
+   {
+    SetCursorPos(position.x, position.y);
     ScreenToClient(window_handle, &position);
+    pointer_id = GET_POINTERID_WPARAM(w_param) + 1;
     
     POINTER_PEN_INFO pen_info;
-    if(GetPointerPenInfo(GET_POINTERID_WPARAM(w_param), &pen_info))
+    if(GetPointerPenInfo(pointer_id, &pen_info))
     {
      if(0 < pen_info.pressure)
      {
@@ -216,11 +224,15 @@ W32WindowMessageCallback(HWND window_handle,
     }
    }
    
-   AppCallback_MouseMotion(w32_global_graphics_context.pixels,
-                           position.x, position.y,
-                           pressure,
-                           input_state);
+   if(pointer_id == currently_down_pointer)
+   {
+    AppCallback_MouseMotion(w32_global_graphics_context.pixels,
+                            position.x, position.y,
+                            pressure,
+                            input_state);
+   }
    
+   AppCallback_Render(w32_global_graphics_context.pixels);
    HDC device_context_handle = GetDC(window_handle);
    W32_RenderToWindow(device_context_handle);
    ReleaseDC(window_handle, device_context_handle);
@@ -253,85 +265,86 @@ W32WindowMessageCallback(HWND window_handle,
   {
    int is_down = !(l_param & (1 << 31));
    
-   if(is_down &&
-      (VK_ESCAPE == w_param && (GetKeyState(VK_SHIFT) & 0x8000)) ||
-      (VK_F4 == w_param && (GetKeyState(VK_MENU) & 0x8000)))
-   {
-    PostQuitMessage(0);
-    W32HideWindow(window_handle);
-   }
-   else if(is_down && VK_ESCAPE == w_param)
-   {
-    W32HideWindow(window_handle);
-   }
-   else if(VK_TAB == w_param)
+   if(VK_TAB == w_param)
    {
     AppCallback_Tab(w32_global_graphics_context.pixels, is_down);
     HDC device_context_handle = GetDC(window_handle);
     W32_RenderToWindow(device_context_handle);
     ReleaseDC(window_handle, device_context_handle);
    }
-   else if(is_down && VK_RETURN == w_param)
+   else if(is_down)
    {
-    Canvas *canvas = LocalAlloc(0, AppCallback_GetCanvasSize());
-    AppCallback_GetCanvas(canvas);
-    
-    HBITMAP copy_bitmap = CreateBitmap(canvas->width, canvas->height, 1, 32, NULL);
-    HDC screen_dc = GetDC(NULL);
-    HDC dest_dc = CreateCompatibleDC(screen_dc);
-    HBITMAP old_destination_bitmap = (HBITMAP)SelectObject(dest_dc, copy_bitmap);
-    
-    BITMAPINFO bitmap_info;
-    BITMAPINFOHEADER *bih = &bitmap_info.bmiHeader;
-    bih->biSize = sizeof(BITMAPINFOHEADER);
-    bih->biPlanes = 1;
-    bih->biWidth = ScreenDimension_X;
-    bih->biHeight = -ScreenDimension_Y;
-    bih->biBitCount = 32;
-    bih->biCompression = BI_RGB;
-    bih->biSizeImage = 0;
-    bih->biClrUsed = 0;
-    bih->biClrImportant = 0;
-    
-    StretchDIBits(dest_dc,
-                  0, 0,
-                  canvas->width,
-                  canvas->height,
-                  0, 0,
-                  canvas->width,
-                  canvas->height,
-                  canvas->pixels,
-                  &bitmap_info,
-                  DIB_RGB_COLORS,
-                  SRCCOPY);
-    
-    ReleaseDC(NULL, screen_dc);
-    DeleteDC(dest_dc);
-    
-    OpenClipboard(window_handle);
-    EmptyClipboard();
-    SetClipboardData(CF_BITMAP, copy_bitmap);
-    CloseClipboard();
-    
-    LocalFree(canvas);
-    W32HideWindow(window_handle);
-   }
-   
-   if((GetKeyState(VK_CONTROL) & 0x8000) && is_down)
-   {
-    if('Z' == w_param)
+    if(VK_ESCAPE == w_param && (GetKeyState(VK_SHIFT) & 0x8000) ||
+       (VK_F4 == w_param && (GetKeyState(VK_MENU) & 0x8000)))
     {
-     AppCallback_Undo(w32_global_graphics_context.pixels);
-     HDC device_context_handle = GetDC(window_handle);
-     W32_RenderToWindow(device_context_handle);
-     ReleaseDC(window_handle, device_context_handle);
+     PostQuitMessage(0);
+     W32HideWindow(window_handle);
     }
-    else if ('Y' == w_param)
+    else if(VK_ESCAPE == w_param)
     {
-     AppCallback_Redo(w32_global_graphics_context.pixels);
-     HDC device_context_handle = GetDC(window_handle);
-     W32_RenderToWindow(device_context_handle);
-     ReleaseDC(window_handle, device_context_handle);
+     W32HideWindow(window_handle);
+    }
+    else if(VK_RETURN == w_param)
+    {
+     Canvas *canvas = LocalAlloc(0, AppCallback_GetCanvasSize());
+     AppCallback_GetCanvas(canvas);
+     
+     HBITMAP copy_bitmap = CreateBitmap(canvas->width, canvas->height, 1, 32, NULL);
+     HDC screen_dc = GetDC(NULL);
+     HDC dest_dc = CreateCompatibleDC(screen_dc);
+     HBITMAP old_destination_bitmap = (HBITMAP)SelectObject(dest_dc, copy_bitmap);
+     
+     BITMAPINFO bitmap_info;
+     BITMAPINFOHEADER *bih = &bitmap_info.bmiHeader;
+     bih->biSize = sizeof(BITMAPINFOHEADER);
+     bih->biPlanes = 1;
+     bih->biWidth = ScreenDimension_X;
+     bih->biHeight = -ScreenDimension_Y;
+     bih->biBitCount = 32;
+     bih->biCompression = BI_RGB;
+     bih->biSizeImage = 0;
+     bih->biClrUsed = 0;
+     bih->biClrImportant = 0;
+     
+     StretchDIBits(dest_dc,
+                   0, 0,
+                   canvas->width,
+                   canvas->height,
+                   0, 0,
+                   canvas->width,
+                   canvas->height,
+                   canvas->pixels,
+                   &bitmap_info,
+                   DIB_RGB_COLORS,
+                   SRCCOPY);
+     
+     ReleaseDC(NULL, screen_dc);
+     DeleteDC(dest_dc);
+     
+     OpenClipboard(window_handle);
+     EmptyClipboard();
+     SetClipboardData(CF_BITMAP, copy_bitmap);
+     CloseClipboard();
+     
+     LocalFree(canvas);
+     W32HideWindow(window_handle);
+    }
+    else if((GetKeyState(VK_CONTROL) & 0x8000))
+    {
+     if('Z' == w_param)
+     {
+      AppCallback_Undo(w32_global_graphics_context.pixels);
+      HDC device_context_handle = GetDC(window_handle);
+      W32_RenderToWindow(device_context_handle);
+      ReleaseDC(window_handle, device_context_handle);
+     }
+     else if ('Y' == w_param)
+     {
+      AppCallback_Redo(w32_global_graphics_context.pixels);
+      HDC device_context_handle = GetDC(window_handle);
+      W32_RenderToWindow(device_context_handle);
+      ReleaseDC(window_handle, device_context_handle);
+     }
     }
    }
   } break;

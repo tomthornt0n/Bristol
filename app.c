@@ -150,6 +150,10 @@ HSVFromRGB(Colour rgb)
  return hsv;
 }
 
+#define FgColour  64,  52,  46
+#define BgColour 255, 255, 255
+//#define BgColour 244, 239, 236
+
 typedef struct
 {
  int is_showing;
@@ -171,8 +175,8 @@ static ColourPicker global_colour_picker =
   { 172, 129,  94 },
   { 173, 142, 180 },
   
-  { 255, 255, 255 },
-  { 0, 0, 0 },
+  { FgColour },
+  { BgColour },
  }
 };
 
@@ -208,13 +212,13 @@ typedef struct
 } BrushSettings;
 static BrushSettings global_brush_settings =
 {
- .colour = {0},
+ .colour = { FgColour },
  .radius = 3,
 };
 
 
 static void
-RenderApp(Pixel *screen)
+AppCallback_Render(Pixel *screen)
 {
  // NOTE(tbt): render canvas
  memcpy(screen, global_canvas, sizeof(global_canvas));
@@ -256,13 +260,17 @@ static int global_prev_y = 0;
 static void
 AppCallback_Init(Pixel *screen)
 {
- memset(global_canvas, 255, sizeof(global_canvas));
+ for(int pixel_index = 0;
+     pixel_index < ScreenDimension_X * ScreenDimension_Y;
+     pixel_index += 1)
+ {
+  global_canvas[pixel_index] = Colour(BgColour);
+ }
  
  global_undo_stack.max_frames = 4096;
  global_undo_stack.frames = malloc(global_undo_stack.max_frames * sizeof(*global_undo_stack.frames));
- memset(global_undo_stack.frames[0].canvas_state, 255, sizeof(global_undo_stack.frames[0].canvas_state));
  
- RenderApp(screen);
+ AppCallback_Render(screen);
 }
 
 static HitTestResult
@@ -298,9 +306,6 @@ AppCallback_MouseDown(Pixel *screen,
  
  if(HitTestResult_Canvas == hit_test_result)
  {
-  UndoFrame *undo_frame = &global_undo_stack.frames[global_undo_stack.current];
-  memcpy(undo_frame->canvas_state, global_canvas, sizeof(undo_frame->canvas_state));
-  
   global_prev_x = x;
   global_prev_y = y;
  }
@@ -327,7 +332,7 @@ AppCallback_MouseDown(Pixel *screen,
           sizeof(global_colour_picker.recents) - 3 * sizeof(global_colour_picker.recents[0]));
    global_colour_picker.recents[0] = global_brush_settings.colour;
   }
-  RenderApp(screen);
+  AppCallback_Render(screen);
  }
  
  return hit_test_result;
@@ -385,12 +390,12 @@ AppCallback_MouseMotion(Pixel *screen,
      {
       int x_offset = positions[i][0] - x0;
       int y_offset = positions[i][1] - y0;
-      int dist_squared = x_offset * x_offset + y_offset * y_offset;
+      int distance_squared = x_offset * x_offset + y_offset * y_offset;
       
-      if(dist_squared <= pressure_adjusted_brush_radius)
+      if(distance_squared <= pressure_adjusted_brush_radius)
       {
        Pixel *current = &global_canvas[x0 + y0 * ScreenDimension_X];
-       float alpha = 1.0f / dist_squared;
+       float alpha = 1.0f / distance_squared;
        *current = ColourLerp(*current, global_brush_settings.colour, alpha);
       }
      }
@@ -410,7 +415,7 @@ AppCallback_MouseMotion(Pixel *screen,
  global_prev_x = x;
  global_prev_y = y;
  
- RenderApp(screen);
+ AppCallback_Render(screen);
 }
 
 static void
@@ -437,7 +442,7 @@ AppCallback_Scroll(Pixel *screen,
  if(HitTestResult_ColourPicker == hit_test_result)
  {
   global_colour_picker.hue += wheel_delta * 2;
-  RenderApp(screen);
+  AppCallback_Render(screen);
  }
  else if(HitTestResult_Canvas == hit_test_result)
  {
@@ -446,9 +451,9 @@ AppCallback_Scroll(Pixel *screen,
   {
    global_brush_settings.radius = new_radius;
   }
-  RenderApp(screen);
+  AppCallback_Render(screen);
   
-  // NOTE(tbt): draw brush size indicator
+  // NOTE(tbt): render brush size indicator
   {
    int radius_squared = global_brush_settings.radius * global_brush_settings.radius;
    int outline_thickness_squared = radius_squared / 8;
@@ -471,7 +476,9 @@ AppCallback_Scroll(Pixel *screen,
       if(distance_squared >= radius_squared - outline_thickness_squared &&
          distance_squared <= radius_squared + outline_thickness_squared)
       {
-       screen[pixel_x + pixel_y * ScreenDimension_X] = Colour(128, 128, 128);
+       Pixel *current = &screen[pixel_x + pixel_y * ScreenDimension_X];
+       float alpha = 1.0f / (distance_squared - radius_squared);
+       *current = ColourLerp(*current, global_brush_settings.colour, alpha);
       }
      }
     }
@@ -484,18 +491,18 @@ static void
 AppCallback_Tab(Pixel *screen, int is_down)
 {
  global_colour_picker.is_showing = !is_down;
- RenderApp(screen);
+ AppCallback_Render(screen);
 }
 
 static void
 AppCallback_Undo(Pixel *screen)
 {
- if(global_undo_stack.current > 0)
+ if(global_undo_stack.current > 1)
  {
   global_undo_stack.current -= 1;
   UndoFrame *undo_frame = &global_undo_stack.frames[global_undo_stack.current];
   memcpy(global_canvas, undo_frame->canvas_state, sizeof(undo_frame->canvas_state));
-  RenderApp(screen);
+  AppCallback_Render(screen);
  }
 }
 
@@ -507,7 +514,7 @@ AppCallback_Redo(Pixel *screen)
   global_undo_stack.current += 1;
   UndoFrame *undo_frame = &global_undo_stack.frames[global_undo_stack.current];
   memcpy(global_canvas, undo_frame->canvas_state, sizeof(undo_frame->canvas_state));
-  RenderApp(screen);
+  AppCallback_Render(screen);
  }
 }
 
@@ -528,9 +535,12 @@ AppCallback_GetCanvas(Canvas *canvas)
 static void
 AppCallback_WindowHidden(Pixel *screen)
 {
- global_undo_stack.top = 0;
  global_undo_stack.current = 0;
- memset(global_undo_stack.frames[0].canvas_state, 255, sizeof(global_undo_stack.frames[0].canvas_state));
- memset(&global_canvas, 255, sizeof(global_canvas));
- RenderApp(screen);
+ for(int pixel_index = 0;
+     pixel_index < ScreenDimension_X * ScreenDimension_Y;
+     pixel_index += 1)
+ {
+  global_canvas[pixel_index] = Colour(BgColour);
+ }
+ AppCallback_Render(screen);
 }
