@@ -13,6 +13,7 @@ A simple pop-up drawing program that appears on key-press and copies straight to
 * `Tab`: hold to hide colour picker
 * `Ctrl+Z`: undo
 * `Ctrl+Y`: redo
+* `J` and `K`: same as mouse scroll wheel (useful with a drawing tablet)
 
 ##  other controls:
 * scroll mouse wheel over canvas to resize brush

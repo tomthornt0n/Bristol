@@ -1,6 +1,8 @@
 #include <windows.h>
 #include <windowsx.h>
 
+#include <stdio.h>
+
 #include "platform.h"
 #include "app.c"
 
@@ -224,13 +226,16 @@ W32WindowMessageCallback(HWND window_handle,
     }
    }
    
-   if(pointer_id == currently_down_pointer)
+   InputState input_state0 = input_state;
+   if(pointer_id != currently_down_pointer)
    {
-    AppCallback_MouseMotion(w32_global_graphics_context.pixels,
-                            position.x, position.y,
-                            pressure,
-                            input_state);
+    input_state0 = 0;
    }
+   
+   AppCallback_MouseMotion(w32_global_graphics_context.pixels,
+                           position.x, position.y, pressure,
+                           input_state0,
+                           (0 != pointer_id));
    
    AppCallback_Render(w32_global_graphics_context.pixels);
    HDC device_context_handle = GetDC(window_handle);
@@ -328,6 +333,28 @@ W32WindowMessageCallback(HWND window_handle,
      
      LocalFree(canvas);
      W32HideWindow(window_handle);
+    }
+    else if('J' == w_param || 'K' == w_param)
+    {
+     int delta;
+     if('J' == w_param)
+     {
+      delta = -1;
+     }
+     else
+     {
+      delta = +1;
+     }
+     
+     POINT mouse;
+     GetCursorPos(&mouse);
+     ScreenToClient(window_handle, &mouse);
+     AppCallback_Scroll(w32_global_graphics_context.pixels,
+                        mouse.x, mouse.y,
+                        delta);
+     HDC device_context_handle = GetDC(window_handle);
+     W32_RenderToWindow(device_context_handle);
+     ReleaseDC(window_handle, device_context_handle);
     }
     else if((GetKeyState(VK_CONTROL) & 0x8000))
     {

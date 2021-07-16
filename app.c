@@ -217,12 +217,22 @@ static BrushSettings global_brush_settings =
 };
 
 
+enum { BrushSizeIndicator_VisibleDuration = 8 };
+typedef struct
+{
+ int visible_frames;
+ int x;
+ int y;
+} BrushSizeIndicator;
+static BrushSizeIndicator global_brush_size_indicator = {0};
+
 static void
 AppCallback_Render(Pixel *screen)
 {
  // NOTE(tbt): render canvas
  memcpy(screen, global_canvas, sizeof(global_canvas));
  
+ // NOTE(tbt): render colour picker
  if(global_colour_picker.is_showing)
  {
   for(int y = ColourPicker_Margin;
@@ -249,6 +259,39 @@ AppCallback_Render(Pixel *screen)
     int pixel_x = x + global_colour_picker.size;
     int pixel_y = y + ColourPicker_Margin;
     screen[pixel_x + pixel_y * ScreenDimension_X] = global_brush_settings.colour;
+   }
+  }
+ }
+ 
+ // NOTE(tbt): render brush size indicator
+ if(global_brush_size_indicator.visible_frames >= 0)
+ {
+  int radius_squared = global_brush_settings.radius * global_brush_settings.radius;
+  int outline_thickness_squared = radius_squared / 8;
+  int half_outline_thickness = (outline_thickness_squared / 2.0f) + 0.5f;
+  
+  for(int y0 = -global_brush_settings.radius - half_outline_thickness;
+      y0 < global_brush_settings.radius + half_outline_thickness;
+      y0 += 1)
+  {
+   for(int x0 = -global_brush_settings.radius - half_outline_thickness;
+       x0 < global_brush_settings.radius + half_outline_thickness;
+       x0 += 1)
+   {
+    int pixel_x = global_brush_size_indicator.x + x0;
+    int pixel_y = global_brush_size_indicator.y + y0;
+    if(0 <= pixel_x && pixel_x < ScreenDimension_X &&
+       0 <= pixel_y && pixel_y < ScreenDimension_Y)
+    {
+     int distance_squared = x0 * x0 + y0 * y0;
+     if(distance_squared >= radius_squared - outline_thickness_squared &&
+        distance_squared <= radius_squared + outline_thickness_squared)
+     {
+      Pixel *current = &screen[pixel_x + pixel_y * ScreenDimension_X];
+      float alpha = ((float)global_brush_size_indicator.visible_frames / (float)BrushSizeIndicator_VisibleDuration);
+      *current = ColourLerp(*current, global_brush_settings.colour, alpha);
+     }
+    }
    }
   }
  }
@@ -342,8 +385,20 @@ static void
 AppCallback_MouseMotion(Pixel *screen,
                         int x, int y,
                         float pressure,
-                        InputState input_state)
+                        InputState input_state,
+                        int is_pen_input)
 {
+ if(InputState_None != input_state)
+ {
+  global_brush_size_indicator.x = x;
+  global_brush_size_indicator.y = y;
+ }
+ 
+ if(!is_pen_input)
+ {
+  global_brush_size_indicator.visible_frames -= 1;
+ }
+ 
  if(InputState_Drawing == input_state)
  {
   enum { MaxSteps = 128 };
@@ -452,38 +507,9 @@ AppCallback_Scroll(Pixel *screen,
    global_brush_settings.radius = new_radius;
   }
   AppCallback_Render(screen);
-  
-  // NOTE(tbt): render brush size indicator
-  {
-   int radius_squared = global_brush_settings.radius * global_brush_settings.radius;
-   int outline_thickness_squared = radius_squared / 8;
-   int half_outline_thickness = (outline_thickness_squared / 2.0f) + 0.5f;
-   
-   for(int y0 = -global_brush_settings.radius - half_outline_thickness;
-       y0 < global_brush_settings.radius + half_outline_thickness;
-       y0 += 1)
-   {
-    for(int x0 = -global_brush_settings.radius - half_outline_thickness;
-        x0 < global_brush_settings.radius + half_outline_thickness;
-        x0 += 1)
-    {
-     int pixel_x = x +x0;
-     int pixel_y = y +y0;
-     if(0 <= pixel_x && pixel_x < ScreenDimension_X &&
-        0 <= pixel_y && pixel_y < ScreenDimension_Y)
-     {
-      int distance_squared = x0 * x0 + y0 * y0;
-      if(distance_squared >= radius_squared - outline_thickness_squared &&
-         distance_squared <= radius_squared + outline_thickness_squared)
-      {
-       Pixel *current = &screen[pixel_x + pixel_y * ScreenDimension_X];
-       float alpha = 1.0f / (distance_squared - radius_squared);
-       *current = ColourLerp(*current, global_brush_settings.colour, alpha);
-      }
-     }
-    }
-   }
-  }
+  global_brush_size_indicator.visible_frames = BrushSizeIndicator_VisibleDuration;
+  global_brush_size_indicator.x = x;
+  global_brush_size_indicator.y = y;
  }
 }
 
@@ -536,6 +562,10 @@ static void
 AppCallback_WindowHidden(Pixel *screen)
 {
  global_undo_stack.current = 0;
+ // NOTE(tbt): reallocate to trick windows into unmapping from physical memory
+ // TODO(tbt): stop using the stdlib and just reserve initially and commit as needed
+ free(global_undo_stack.frames);
+ global_undo_stack.frames = malloc(global_undo_stack.max_frames * sizeof(*global_undo_stack.frames));
  for(int pixel_index = 0;
      pixel_index < ScreenDimension_X * ScreenDimension_Y;
      pixel_index += 1)
