@@ -3,6 +3,7 @@ A simple pop-up drawing program that appears on key-press and copies straight to
 
 ## TODO:
 * customisable key-bindings
+* setting to enable launch on startup
 
 ## key bindings:
 * `Win+Shift+D` (while window is hidden): show window
